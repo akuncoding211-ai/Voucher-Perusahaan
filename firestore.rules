@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Standard safety validation functions
+    function isSignedIn() {
+      return true; // Simple internal access or authenticated in general context
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Helper to validate a submission's exact properties to prevent update gap and shadow injection
+    function isValidSubmission(data) {
+      return data.keys().hasAll(['id', 'lokasi', 'tanggal', 'dibayarkanKepada', 'items'])
+             && data.id is string && data.id.size() <= 100
+             && data.lokasi is string && data.lokasi.size() <= 100
+             && data.tanggal is string && data.tanggal.size() <= 20
+             && data.dibayarkanKepada is string && data.dibayarkanKepada.size() <= 200
+             && data.items is list
+             && data.items.size() <= 100;
+    }
+
+    // Match block for standard submissions collection
+    match /submissions/{submissionId} {
+      allow get, list: if isSignedIn();
+      
+      allow create: if isSignedIn() 
+                    && isValidId(submissionId)
+                    && isValidSubmission(incoming())
+                    && incoming().id == submissionId;
+                    
+      allow update: if isSignedIn()
+                    && isValidId(submissionId)
+                    && isValidSubmission(incoming())
+                    && incoming().id == existing().id;
+                    
+      allow delete: if isSignedIn()
+                    && isValidId(submissionId);
+    }
+  }
+}

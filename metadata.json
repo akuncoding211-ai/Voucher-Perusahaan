@@ -1,0 +1,8 @@
+{
+  "name": "Aplikasi Voucher Perusahaan",
+  "description": "Aplikasi untuk input data Formulir Pengajuan HO dan Bukti Pengeluaran Kas/Bank dengan layout cetak presisi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

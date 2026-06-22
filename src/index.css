@@ -1,0 +1,132 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Outfit", "Plus Jakarta Sans", sans-serif;
+}
+
+:root {
+  --brand-gold: #D4AF37;
+  --brand-gold-hover: #Bca031;
+  --brand-gradient-start: #d97706;
+  --brand-gradient-end: #f59e0b;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.15s ease;
+}
+
+/* Classic Pearl Light Theme (Default) */
+.theme-classic {
+  --brand-gold: #D4AF37;
+  --brand-gold-hover: #Bca031;
+  --brand-gradient-start: #d97706;
+  --brand-gradient-end: #f59e0b;
+}
+
+/* Gold In The Dark - Luxury Midnight with Gold Accents */
+.theme-gold-dark {
+  --brand-gold: #D4AF37;
+  --brand-gold-hover: #f1c40f;
+  --brand-gradient-start: #917118;
+  --brand-gradient-end: #f59e0b;
+  
+  /* Redefine Tailwind system color variables for deep dark skin style */
+  --color-white: #161618;           /* Card containers & header backgrounds */
+  --color-stone-50: #0a0a0b;        /* System body background */
+  --color-stone-100: #212124;       /* Table headers, hover states, input bg */
+  --color-stone-150: #2a2a2d;       
+  --color-stone-200: #2d2d31;       /* Border dividers and frames */
+  --color-stone-205: #323237;       
+  --color-stone-250: #3f3f46;
+  --color-stone-300: #49494f;
+  --color-stone-400: #a1a1aa;       /* Muted description descriptions */
+  --color-stone-450: #88888f;
+  --color-stone-500: #a1a1aa;
+  --color-stone-550: #b9b9c0;
+  --color-stone-600: #b9b9c0;
+  --color-stone-700: #d4d4d8;       
+  --color-stone-750: #e4e4e7;       
+  --color-stone-800: #e4e4e7;       /* Primary typography body elements */
+  --color-stone-850: #f4f4f5;       /* Secondary display titles */
+  --color-stone-900: #ffffff;       /* Heading, text & strong label names */
+  --color-stone-955: #ffffff;
+}
+
+/* Royal Emerald - Dignified Corporate Marble Mint Scheme */
+.theme-emerald {
+  --brand-gold: #059669;
+  --brand-gold-hover: #047857;
+  --brand-gradient-start: #047857;
+  --brand-gradient-end: #10b981;
+  
+  /* Soft Emerald light style override */
+  --color-white: #ffffff;
+  --color-stone-50: #f1f6f3;        /* Soft mint-toned background */
+  --color-stone-100: #e3eee8;       /* Headers, status pills */
+  --color-stone-150: #dbebe2;
+  --color-stone-200: #cadcd2;       /* Borders and divides */
+  --color-stone-205: #c0d5c9;
+  --color-stone-250: #abc3b6;
+  --color-stone-300: #91ae9f;
+  --color-stone-400: #577365;       /* Forest green tinted text labels */
+  --color-stone-550: #3d5448;
+  --color-stone-800: #1f2e26;       /* Very deep corporate slate text */
+  --color-stone-850: #14201a;
+  --color-stone-900: #0a110d;
+}
+
+/* Slate Minimalist - Sleek Executive Matte Dark Cyber theme */
+.theme-slate {
+  --brand-gold: #0284c7;            /* Sky blue cyber dynamic */
+  --brand-gold-hover: #0ea5e9;
+  --brand-gradient-start: #0369a1;
+  --brand-gradient-end: #0ea5e9;
+  
+  /* Matte Space Dark Style */
+  --color-white: #1e222b;           /* Space gray cards BG */
+  --color-stone-50: #11141a;        /* Carbon fiber space background */
+  --color-stone-100: #292e3a;       /* Dark inputs, headings back */
+  --color-stone-150: #313745;
+  --color-stone-200: #383f4f;       /* Accent lines, borders */
+  --color-stone-205: #3e4659;
+  --color-stone-250: #4a546a;
+  --color-stone-300: #5a6680;
+  --color-stone-400: #8892b0;       /* Cool slate labels */
+  --color-stone-500: #8892b0;
+  --color-stone-800: #cbd5e1;       /* Gray-text elements */
+  --color-stone-850: #e2e8f0;
+  --color-stone-900: #f8fafc;       /* Plain snow headings */
+}
+
+/* Helper dynamic selectors */
+.text-gold-dynamic {
+  color: var(--brand-gold) !important;
+}
+.bg-gold-dynamic {
+  background-color: var(--brand-gold) !important;
+}
+.hover\:bg-gold-dynamic-hover:hover {
+  background-color: var(--brand-gold-hover) !important;
+}
+.border-gold-dynamic {
+  border-color: var(--brand-gold) !important;
+}
+
+.border-header-gradient {
+  background: linear-gradient(90deg, var(--brand-gradient-start) 0%, var(--brand-gold) 50%, var(--brand-gradient-end) 100%) !important;
+}
+
+/* Custom classy animation effects */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Extra support for smooth background shifts */
+#app-root, header, footer, main, select, input, button, table, transition-all {
+  transition: background-color 0.15s ease-out, border-color 0.15s ease-out, color 0.15s ease-out;
+}

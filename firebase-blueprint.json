@@ -1,0 +1,36 @@
+{
+  "entities": {
+    "submission": {
+      "title": "Submission",
+      "description": "Internal HO Nusantara Mineral Payment voucher submission metadata and line items status tracker.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "lokasi": { "type": "string" },
+        "tanggal": { "type": "string", "format": "date" },
+        "jenisPengajuan": { "type": "string" },
+        "kode": { "type": "string" },
+        "dibayarkanKepada": { "type": "string" },
+        "dibayarkanDengan": { "type": "string", "enum": ["Tunai", "Cek/Transfer"] },
+        "notes": { "type": "string" },
+        "dibuatOleh": { "type": "string" },
+        "disetujuiOleh": { "type": "string" },
+        "diverifikasiOleh": { "type": "string" },
+        "diverifikasiJabatan": { "type": "string" },
+        "disetujuiOleh2": { "type": "string" },
+        "disetujuiJabatan2": { "type": "string" },
+        "dibukukanOleh": { "type": "string" },
+        "dibukukanJabatan": { "type": "string" },
+        "items": { "type": "array", "description": "Submission items list" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "lokasi", "tanggal", "dibayarkanKepada", "items"]
+    }
+  },
+  "firestore": {
+    "submissions": {
+      "schema": "submission",
+      "description": "Global user-submitted invoices ledger and cash book entries."
+    }
+  }
+}
