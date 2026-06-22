@@ -7,8 +7,7 @@ import { PrintDocument } from './components/PrintDocument';
 import { JsonBackup } from './components/JsonBackup';
 import { DriveSyncMass } from './components/DriveSyncMass';
 import { NusantaraLogo } from './components/NusantaraLogo';
-import { SheetsImport } from './components/SheetsImport';
-import { FirebaseSyncConfig } from './components/FirebaseSyncConfig';
+import { CloudControlCenter } from './components/CloudControlCenter';
 import { AuthGate } from './components/AuthGate';
 import { InputBuktiTransfer } from './components/InputBuktiTransfer';
 import { UserProfileModal } from './components/UserProfileModal';
@@ -654,17 +653,13 @@ export default function App() {
         {view === 'list' && (
           <div className="space-y-6">
             
-            {/* Firebase Live Sync Configuration & Status Panel */}
-            <FirebaseSyncConfig
-              onSyncData={handleFirebaseSync}
+            {/* Unified Cloud Control & Integration Center */}
+            <CloudControlCenter
               submissions={submissions}
               userProfile={userProfile}
-            />
-            
-            {/* Sheets Import & Syncer Component */}
-            <SheetsImport
+              onSyncData={handleFirebaseSync}
+              onUpdateSubmissions={saveSubmissionsToStorage}
               onImportSuccess={handleSheetsImport}
-              existingCount={submissions.length}
             />
 
             {/* Main Listing components */}

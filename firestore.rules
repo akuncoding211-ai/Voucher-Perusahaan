@@ -1,19 +1,37 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // 1. Global Safety Net
+    
+    // 1. Global Safety Net (Default Deny)
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Standard safety validation functions
+    // --- Global Helper Functions ---
+    
     function isSignedIn() {
-      return true; // Simple internal access or authenticated in general context
+      return request.auth != null;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    function isBootstrappedAdmin() {
+      return request.auth.token.email == "yudi02012001@gmail.com";
+    }
+
+    // Role-based lookup from users collection
+    function isAdmin() {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin")
+      );
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.email == 'yudi02012001@gmail.com');
     }
 
     function incoming() {
@@ -24,33 +42,88 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Helper to validate a submission's exact properties to prevent update gap and shadow injection
-    function isValidSubmission(data) {
-      return data.keys().hasAll(['id', 'lokasi', 'tanggal', 'dibayarkanKepada', 'items'])
-             && data.id is string && data.id.size() <= 100
-             && data.lokasi is string && data.lokasi.size() <= 100
-             && data.tanggal is string && data.tanggal.size() <= 20
-             && data.dibayarkanKepada is string && data.dibayarkanKepada.size() <= 200
-             && data.items is list
-             && data.items.size() <= 100;
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Match block for standard submissions collection
-    match /submissions/{submissionId} {
-      allow get, list: if isSignedIn();
+    // --- Entity Validations ---
+
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 256 &&
+             (data.fullName is string || data.name is string) &&
+             (data.role == "admin" || data.role == "employee" || data.role == "Accounting");
+    }
+
+    function isValidAttendance(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.employeeId is string && data.employeeId.size() <= 128 &&
+             data.employeeName is string && data.employeeName.size() <= 256 &&
+             data.employeeEmail is string && data.employeeEmail.size() <= 256 &&
+             data.date is string && data.date.size() == 10 &&
+             data.clockIn is string && data.clockIn.size() <= 100 &&
+             data.status in ["Present", "Late", "Absent", "Incomplete"] &&
+             data.isVerified is bool;
+    }
+
+
+    // --- Collection Routes & Action Gates ---
+
+    // 2. Users Collection (Merged for both apps)
+    match /users/{uid} {
+      allow get: if isSignedIn() && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
       
-      allow create: if isSignedIn() 
-                    && isValidId(submissionId)
-                    && isValidSubmission(incoming())
-                    && incoming().id == submissionId;
-                    
-      allow update: if isSignedIn()
-                    && isValidId(submissionId)
-                    && isValidSubmission(incoming())
-                    && incoming().id == existing().id;
-                    
-      allow delete: if isSignedIn()
-                    && isValidId(submissionId);
+      // Creating profiles:
+      // Employees/Accounting can sign up, or bootstrapped admin can create profiles with any settings.
+      allow create: if isSignedIn() && isOwner(uid) && isValidId(uid) && isValidUser(incoming());
+
+      // Updating profiles:
+      allow update: if isSignedIn() && isOwner(uid) && isValidId(uid) && isValidUser(incoming()) && (
+        isAdmin() || (
+          incoming().role == existing().role
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // 3. Attendance Logs (Your original rules)
+    match /attendance/{attendanceId} {
+      allow get: if isSignedIn() && (isAdmin() || resource.data.employeeId == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || resource.data.employeeId == request.auth.uid);
+
+      allow create: if isVerifiedUser() && isValidId(attendanceId) && isValidAttendance(incoming()) && (
+        incoming().employeeId == request.auth.uid
+      );
+
+      allow update: if isSignedIn() && isValidId(attendanceId) && isValidAttendance(incoming()) && (
+        isAdmin() || (
+          isVerifiedUser() &&
+          incoming().employeeId == request.auth.uid &&
+          existing().employeeId == request.auth.uid &&
+          existing().clockOut == null &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['clockOut', 'clockOutLocation', 'clockOutNotes', 'status'])
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // 4. Office Configurations (Your original rules)
+    match /office_config/{configId} {
+      allow get, list: if isSignedIn();
+      allow write: if isAdmin() && isValidId(configId);
+    }
+
+    // 5. Submissions (Voucher / Invoice App Transactions)
+    match /submissions/{submissionId} {
+      allow get, list, create, update, delete: if isSignedIn();
+    }
+
+    // 6. Companies (Voucher / Invoice App Company Config)
+    match /companies/{companyId} {
+      allow get, list, create, update, delete: if isSignedIn();
     }
   }
 }
