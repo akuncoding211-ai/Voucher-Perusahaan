@@ -1003,9 +1003,128 @@ const firebaseConfig = {
                     </p>
                     <button
                       onClick={() => {
-                        const rules = `rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if false;\n    }\n    function isSignedIn() {\n      return request.auth != null;\n    }\n    function isValidId(id) {\n      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');\n    }\n    function incoming() {\n      return request.resource.data;\n    }\n    function existing() {\n      return resource.data;\n    }\n    function isValidSubmission(data) {\n      return data.keys().hasAll(['id', 'lokasi', 'tanggal', 'dibayarkanKepada', 'items'])\n             && data.id is string\n             && data.lokasi is string\n             && data.tanggal is string\n             && data.dibayarkanKepada is string\n             && data.items is list;\n    }\n    match /submissions/{submissionId} {\n      allow get, list: if isSignedIn();\n      allow create: if isSignedIn() && isValidId(submissionId) && isValidSubmission(incoming()) && incoming().id == submissionId;\n      allow update: if isSignedIn() && isValidId(submissionId) && isValidSubmission(incoming()) && incoming().id == existing().id;\n      allow delete: if isSignedIn() && isValidId(submissionId);\n    }\n  }\n}`;
+                        const rules = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrappedAdmin() {
+      return request.auth.token.email == "yudi02012001@gmail.com";
+    }
+
+    // Role-based lookup from users collection
+    function isAdmin() {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin")
+      );
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.email == 'yudi02012001@gmail.com');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');
+    }
+
+    // --- Entity Validations ---
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 256 &&
+             (data.fullName is string || data.name is string) &&
+             (data.role == "admin" || data.role == "employee" || data.role == "Accounting");
+    }
+
+    function isValidAttendance(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.employeeId is string && data.employeeId.size() <= 128 &&
+             data.employeeName is string && data.employeeName.size() <= 256 &&
+             data.employeeEmail is string && data.employeeEmail.size() <= 256 &&
+             data.date is string && data.date.size() == 10 &&
+             data.clockIn is string && data.clockIn.size() <= 100 &&
+             data.status in ["Present", "Late", "Absent", "Incomplete"] &&
+             data.isVerified is bool;
+    }
+
+    // --- Collection Routes & Action Gates ---
+
+    // 2. Users Collection (Merged for both apps)
+    match /users/{uid} {
+      allow get: if isSignedIn() && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isOwner(uid) && isValidId(uid) && isValidUser(incoming());
+      allow update: if isSignedIn() && isOwner(uid) && isValidId(uid) && isValidUser(incoming()) && (
+        isAdmin() || (incoming().role == existing().role)
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 3. Attendance Logs
+    match /attendance/{attendanceId} {
+      allow get: if isSignedIn() && (isAdmin() || resource.data.employeeId == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || resource.data.employeeId == request.auth.uid);
+      allow create: if isVerifiedUser() && isValidId(attendanceId) && isValidAttendance(incoming()) && (
+        incoming().employeeId == request.auth.uid
+      );
+      allow update: if isSignedIn() && isValidId(attendanceId) && isValidAttendance(incoming()) && (
+        isAdmin() || (
+          isVerifiedUser() &&
+          incoming().employeeId == request.auth.uid &&
+          existing().employeeId == request.auth.uid &&
+          existing().clockOut == null &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['clockOut', 'clockOutLocation', 'clockOutNotes', 'status'])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 4. Office Configurations
+    match /office_config/{configId} {
+      allow get, list: if isSignedIn();
+      allow write: if isAdmin() && isValidId(configId);
+    }
+
+    // 5. Submissions (Voucher / Invoice App Transactions)
+    match /submissions/{submissionId} {
+      allow get, list, create, update, delete: if isSignedIn();
+    }
+
+    // 6. Companies (Voucher / Invoice App Company Config)
+    match /companies/{companyId} {
+      allow get, list, create, update, delete: if isSignedIn();
+    }
+
+    // 7. Activity Logs (Voucher / Invoice App Logs)
+    match /activity_logs/{logId} {
+      allow get, list, create, update, delete: if isSignedIn();
+    }
+  }
+}`;
                         navigator.clipboard.writeText(rules);
-                        alert('✓ Aturan Keamanan "Mode Aman Produktif" sukses disalin! Tempelkan (paste) di tab "Rules" Cloud Firestore Anda.');
+                        alert('✓ Aturan Keamanan Gabungan "Mode Aman Produktif" sukses disalin! Tempelkan (paste) di tab "Rules" Cloud Firestore Anda.');
                       }}
                       className="px-3.5 py-2 bg-stone-900 border hover:bg-stone-800 text-white rounded-lg text-[10px] font-mono font-bold w-full transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >

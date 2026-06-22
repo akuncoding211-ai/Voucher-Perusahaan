@@ -125,5 +125,10 @@ service cloud.firestore {
     match /companies/{companyId} {
       allow get, list, create, update, delete: if isSignedIn();
     }
+
+    // 7. Activity Logs (Voucher / Invoice App Logs)
+    match /activity_logs/{logId} {
+      allow get, list, create, update, delete: if isSignedIn();
+    }
   }
 }
