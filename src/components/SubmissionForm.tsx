@@ -1094,10 +1094,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               }
             }
           } else {
-            // General attachment: PRESERVE original filename without extension (ext is appended below)
+            // General attachment: Format as "Lampiran - (Jenis - Penerima) - [Nama File Asli]"
             const lastDot = originalName.lastIndexOf('.');
             const nameNoExt = lastDot !== -1 ? originalName.substring(0, lastDot) : originalName;
-            baseName = nameNoExt.trim();
+            baseName = `Lampiran - (${cleanJenis} - ${cleanPenerima}) - ${nameNoExt.trim()}`;
           }
           
           const finalFileName = i === 0 ? `${baseName}${ext}` : `${baseName} (${i + 1})${ext}`;
