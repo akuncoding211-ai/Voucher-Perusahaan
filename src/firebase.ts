@@ -59,38 +59,7 @@ let currentUser: User | null = null;
 
 // Helper to check and parse stored config
 export const getStoredFirebaseConfig = (): any | null => {
-  try {
-    const localConfig = localStorage.getItem('NUSANTARA_FIREBASE_CONFIG');
-    if (localConfig) {
-      return JSON.parse(localConfig);
-    }
-  } catch (e) {
-    console.warn('Failed to parse locally stored Firebase config:', e);
-  }
-
-  // Fallback to import.meta.env if provided at build-time
-  const envConfig = import.meta.env.VITE_FIREBASE_CONFIG;
-  if (envConfig) {
-    try {
-      return JSON.parse(envConfig);
-    } catch {
-      // If it's a string representation or individual variables fallback
-    }
-  }
-
-  // Alternately check if any discrete env variables exist
-  if (import.meta.env.VITE_FIREBASE_API_KEY) {
-    return {
-      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: import.meta.env.VITE_FIREBASE_APP_ID
-    };
-  }
-
-  // Static fallback: The user's production Firebase project
+  // Static configuration hardcoded securely as requested to avoid any conflicts
   return {
     apiKey: "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
     authDomain: "pencatatan-voucher-perusahaan.firebaseapp.com",
@@ -617,9 +586,9 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
   const legacyToken = localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
   if (legacyToken) {
     const initialDrive: ConnectedDrive = {
-      email: 'akun.utama@gmail.com', // placeholder until fetched
+      email: 'yudiakungaming@gmail.com', // fallback as requested by user
       accessToken: legacyToken,
-      displayName: 'Akun Utama',
+      displayName: 'yudiakungaming@gmail.com',
       quotaUsed: 0,
       quotaLimit: 15 * 1024 * 1024 * 1024, // 15 GB
       lastChecked: new Date().toISOString()
@@ -658,7 +627,7 @@ export const fetchDriveQuotaMetadata = async (token: string): Promise<{
   }
   const data = await response.json();
   return {
-    email: data.user?.emailAddress || 'akun@gmail.com',
+    email: data.user?.emailAddress || 'yudiakungaming@gmail.com',
     displayName: data.user?.displayName || 'Google Drive',
     photoURL: data.user?.photoLink || '',
     quotaUsed: parseInt(data.storageQuota?.usage || '0', 10),
@@ -769,7 +738,7 @@ export const googleDriveLogin = async (): Promise<{ user: User; accessToken: str
     } catch (apiErr) {
       console.warn('Failed to fetch Drive metadata, using fallback details', apiErr);
       driveDetails = {
-        email: result.user.email || 'akun.baru@gmail.com',
+        email: result.user.email || 'yudiakungaming@gmail.com',
         displayName: result.user.displayName || 'Google Drive',
         photoURL: result.user.photoURL || '',
         quotaUsed: 0,
