@@ -561,9 +561,15 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
         });
 
         // 4. Download and Re-Upload existing supporting docs
-        const existingDocs = (sub.googleDriveFiles || []).filter(
-          f => !f.isF1 && !f.isF2 && !f.isBuktiPembayaran && !f.name.startsWith('F1 -') && !f.name.startsWith('F2 -')
-        );
+        const existingDocs = (sub.googleDriveFiles || []).filter(f => {
+          if (f.isF1 || f.isF2 || f.isBuktiPembayaran || f.docType === 'petty_cash_report') {
+            return false;
+          }
+          const name = f.name || '';
+          if (name.startsWith('F1 - (') && name.endsWith(').pdf')) return false;
+          if (name.startsWith('F2 - (') && name.endsWith(').pdf')) return false;
+          return true;
+        });
 
         for (let docIdx = 0; docIdx < existingDocs.length; docIdx++) {
           if (stopRequestedRef.current) break; // allow breaking inside files loop

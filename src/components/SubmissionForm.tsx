@@ -316,6 +316,126 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   ]);
 
   const [validationError, setValidationError] = useState('');
+  
+  // AI Receipt Scanner states
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanSuccess, setScanSuccess] = useState(false);
+  const [scanError, setScanError] = useState('');
+  const [scanResultJson, setScanResultJson] = useState<any>(null);
+  const [showLedgerCols, setShowLedgerCols] = useState(false);
+
+  // File handler for AI Receipt processing
+  const handleAiScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsScanning(true);
+    setScanSuccess(false);
+    setScanError('');
+    setScanResultJson(null);
+
+    try {
+      const reader = new FileReader();
+      const fileLoadedPromise = new Promise<{ base64: string; mimeType: string }>((resolve, reject) => {
+        reader.onload = () => {
+          const resultStr = reader.result as string;
+          resolve({
+            base64: resultStr,
+            mimeType: file.type || 'application/octet-stream'
+          });
+        };
+        reader.onerror = () => {
+          reject(new Error('Gagal membaca berkas.'));
+        };
+        reader.readAsDataURL(file);
+      });
+
+      const { base64, mimeType } = await fileLoadedPromise;
+
+      const response = await fetch('/api/gemini/parse-receipt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fileBase64: base64,
+          mimeType: mimeType
+        })
+      });
+
+      if (!response.ok) {
+        const errObj = await response.json();
+        throw new Error(errObj.error || errObj.details || 'Gagal memproses struk menggunakan Gemini AI.');
+      }
+
+      const resData = await response.json();
+      if (resData.success && resData.result) {
+        const extracted = resData.result;
+        setScanResultJson(extracted);
+        setScanSuccess(true);
+
+        // Pre-fill fields
+        if (extracted.tanggal) setTanggal(extracted.tanggal);
+        if (extracted.deskripsi) setDibayarkanKepada(extracted.deskripsi);
+        if (extracted.keterangan) setNotes(extracted.keterangan);
+        if (extracted.nominal) {
+          setInvoiceAmount(extracted.nominal);
+          setIsInvoice(true);
+        }
+
+        // Check if extracted items have ledger details
+        let hasLedger = false;
+
+        if (extracted.items && extracted.items.length > 0) {
+          const mappedItems: SubmissionItem[] = extracted.items.map((it: any, idx: number) => {
+            if (it.debit !== undefined || it.kredit !== undefined || it.saldo !== undefined) {
+              hasLedger = true;
+            }
+            return {
+              id: `ai-${idx}-${Math.random()}`,
+              no: idx + 1,
+              item: it.item || 'Item Terdeteksi',
+              jumlahVolume: it.jumlahVolume || '1 Ls',
+              total: Number(it.total) || 0,
+              keterangan: it.keterangan || 'Diekstrak oleh AI',
+              debit: it.debit,
+              kredit: it.kredit,
+              saldo: it.saldo
+            };
+          });
+          setItems(mappedItems);
+        } else {
+          if (extracted.debit !== undefined || extracted.kredit !== undefined || extracted.saldo !== undefined) {
+            hasLedger = true;
+          }
+          setItems([
+            {
+              id: `ai-single-${Math.random()}`,
+              no: 1,
+              item: extracted.deskripsi || extracted.keterangan || 'Belanja Struk/Kwitansi',
+              jumlahVolume: '1 Ls',
+              total: Number(extracted.nominal) || 0,
+              keterangan: 'Diekstrak oleh AI',
+              debit: extracted.debit,
+              kredit: extracted.kredit,
+              saldo: extracted.saldo
+            }
+          ]);
+        }
+
+        if (hasLedger) {
+          setShowLedgerCols(true);
+        }
+      } else {
+        throw new Error('Ekstraksi AI tidak membuahkan hasil data JSON yang valid.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setScanError(err.message || 'Gagal melakukan pemindaian berkas.');
+    } finally {
+      setIsScanning(false);
+    }
+  };
 
   // Google Drive attachment support states
   const [googleDriveFileUrl, setGoogleDriveFileUrl] = useState('');
@@ -625,15 +745,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       if (initialSubmission.googleDriveFiles && initialSubmission.googleDriveFiles.length > 0) {
         setGoogleDriveFiles(initialSubmission.googleDriveFiles);
         // Exclude system files (F1, F2, petty cash report, and payment proof) from the editable attachments list
-        const filteredAttachmentFiles = initialSubmission.googleDriveFiles.filter(f => 
-          !f.isF1 && 
-          !f.isF2 && 
-          !f.isBuktiPembayaran &&
-          f.docType !== 'petty_cash_report' &&
-          !(f.name || '').startsWith('F1 -') &&
-          !(f.name || '').startsWith('F2 -') &&
-          !(f.name || '').startsWith('Laporan Petty Cash -')
-        );
+        const filteredAttachmentFiles = initialSubmission.googleDriveFiles.filter(f => {
+          if (f.isF1 || f.isF2 || f.isBuktiPembayaran || f.docType === 'petty_cash_report') {
+            return false;
+          }
+          const name = f.name || '';
+          if (name.startsWith('F1 - (') && name.endsWith(').pdf')) return false;
+          if (name.startsWith('F2 - (') && name.endsWith(').pdf')) return false;
+          return true;
+        });
         setFileItems(filteredAttachmentFiles.map((f, i) => ({
           id: `drive-${i}`,
           name: f.name,
@@ -1033,10 +1153,26 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           return lastDot !== -1 ? filename.substring(lastDot).toLowerCase() : '';
         };
 
+        const getCleanOriginalName = (filename: string): string => {
+          if (!filename) return '';
+          // Strip system-added prefixes to restore the original name
+          let cleaned = filename.replace(/^Lampiran - \([^-]+\s*-\s*[^)]+\)\s*-\s*/i, '');
+          cleaned = cleaned.replace(/^File Pendukung Transaksi - \([^-]+\s*-\s*[^)]+\)\s*-\s*/i, '');
+          cleaned = cleaned.replace(/^[^-]+ - \([^-]+\s*-\s*[^)]+\)\s*-\s*/i, '');
+          
+          REQUIRED_TRANSACTION_DOCS.forEach(doc => {
+            const rx = new RegExp(`^${doc.label}\\s*-\\s*`, 'i');
+            cleaned = cleaned.replace(rx, '');
+          });
+          return cleaned.trim() || filename;
+        };
+
         for (let i = 0; i < fileItems.length; i++) {
           const item = fileItems[i];
           // Skip if they are older versions of generated F1/F2 files to avoid infinite loops / redundant pages
-          if (item.name.startsWith('F1 -') || item.name.startsWith('F2 -')) {
+          const isSystemGenerated = (item.name || '').startsWith('F1 - (') && (item.name || '').endsWith(').pdf') ||
+                                    (item.name || '').startsWith('F2 - (') && (item.name || '').endsWith(').pdf');
+          if (isSystemGenerated) {
             continue;
           }
           setSaveProgress(`Mengunggah Berkas Lampiran (${i + 1}/${fileItems.length}): ${item.name}...`);
@@ -1079,28 +1215,12 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             }
           }
 
-          const ext = mimeType === 'application/pdf' ? '.pdf' : (getFileExtensionForSave(originalName) || '.bin');
+          const cleanOriginalName = getCleanOriginalName(originalName);
+          const ext = mimeType === 'application/pdf' ? '.pdf' : (getFileExtensionForSave(cleanOriginalName) || '.bin');
+          const lastDot = cleanOriginalName.lastIndexOf('.');
+          const namePart = lastDot !== -1 ? cleanOriginalName.substring(0, lastDot) : cleanOriginalName;
           
-          let baseName = '';
-          if (item.docType) {
-            if (item.docType === 'merged_all') {
-              baseName = `Lengkap - Gabungan 9 Dokumen Utama - (${cleanJenis} - ${cleanPenerima})`;
-            } else {
-              const foundDoc = REQUIRED_TRANSACTION_DOCS.find(d => d.key === item.docType);
-              if (foundDoc) {
-                baseName = `${foundDoc.label} - (${cleanJenis} - ${cleanPenerima})`;
-              } else {
-                baseName = `File Pendukung Transaksi - (${cleanJenis} - ${cleanPenerima})`;
-              }
-            }
-          } else {
-            // General attachment: Format as "Lampiran - (Jenis - Penerima) - [Nama File Asli]"
-            const lastDot = originalName.lastIndexOf('.');
-            const nameNoExt = lastDot !== -1 ? originalName.substring(0, lastDot) : originalName;
-            baseName = `Lampiran - (${cleanJenis} - ${cleanPenerima}) - ${nameNoExt.trim()}`;
-          }
-          
-          const finalFileName = i === 0 ? `${baseName}${ext}` : `${baseName} (${i + 1})${ext}`;
+          const finalFileName = i === 0 ? `${namePart}${ext}` : `${namePart} (${i + 1})${ext}`;
 
           const resData = await uploadFileToFolder(finalFileName, mimeType, fileBytes, targetFolderId);
           finalFiles.push({
@@ -1131,7 +1251,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             }
           }
           
-          let finalName = `Bukti Pembayaran - (${cleanJenis} - ${cleanPenerima})${paymentExt}`;
+          const cleanPaymentName = getCleanOriginalName(buktiPembayaranFile.name);
+          const lastDotPayment = cleanPaymentName.lastIndexOf('.');
+          const namePartPayment = lastDotPayment !== -1 ? cleanPaymentName.substring(0, lastDotPayment) : cleanPaymentName;
+          let finalName = `${namePartPayment}${paymentExt}`;
           
           const uploadResult = await uploadFileToFolder(finalName, mime, bytes, folderBuktiBayarId);
           finalBuktiPembayaran = uploadResult;
@@ -1311,6 +1434,121 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             <span>{validationError}</span>
           </div>
         )}
+
+        {/* ✨ AI RECEIPT SCANNER ZONE */}
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50/40 p-5 rounded-2xl border border-amber-200/80 shadow-3xs space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Sparkles size={18} className="text-amber-600 animate-pulse" />
+                <h4 className="text-sm font-black font-display text-amber-900 uppercase tracking-wide">
+                  Pindai Struk / Kwitansi dengan AI
+                </h4>
+              </div>
+              <p className="text-xs text-amber-850">
+                Unggah berkas kwitansi digital (format <b>PDF</b> atau <b>Gambar JPG/PNG</b>). AI akan mengekstrak tanggal, deskripsi, keterangan, nominal, debit/kredit, serta saldo secara otomatis!
+              </p>
+            </div>
+            {isScanning && (
+              <span className="bg-amber-100 text-amber-900 text-[10px] font-mono px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-amber-200 shrink-0">
+                <Loader2 size={11} className="animate-spin" /> Menganalisis...
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+            <div className="md:col-span-8">
+              <label className="flex flex-col items-center justify-center border-2 border-dashed border-amber-300 hover:border-amber-400 bg-white/70 hover:bg-white text-[#6c5513] hover:text-[#52400a] rounded-xl py-6 px-4 cursor-pointer transition text-center group">
+                <FileUp size={28} className="text-amber-500 group-hover:scale-105 transition mb-2" />
+                <span className="text-xs font-bold">Pilih atau Seret Dokumen Struk / Kwitansi</span>
+                <span className="text-[10px] text-stone-400 mt-1">PDF, JPG, JPEG, atau PNG (Maks 15 MB)</span>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="image/*,application/pdf"
+                  onChange={handleAiScanFile}
+                  disabled={isScanning}
+                />
+              </label>
+            </div>
+
+            <div className="md:col-span-4 space-y-2">
+              <div className="bg-white/80 p-3.5 rounded-xl border border-amber-200/60 shadow-4xs text-xs space-y-2 h-full flex flex-col justify-center">
+                <div className="text-amber-900 font-bold flex items-center gap-1">
+                  💡 Tips Efektif
+                </div>
+                <p className="text-[11px] text-amber-800/80 leading-relaxed">
+                  Gunakan foto yang cerah dan teks yang terbaca jelas agar AI dapat mendeteksi tanggal, keterangan, atau baris debit/kredit dengan akurat.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Error Message */}
+          {scanError && (
+            <div className="p-3 bg-red-50 border border-red-150 text-red-750 rounded-xl text-xs flex items-start gap-2">
+              <AlertCircle size={15} className="shrink-0 mt-0.5" />
+              <span>{scanError}</span>
+            </div>
+          )}
+
+          {/* Success Message / Summary Badge */}
+          {scanSuccess && scanResultJson && (
+            <div className="p-4 bg-amber-50/20 border border-amber-200/60 rounded-xl text-xs space-y-3 font-sans shadow-4xs animate-fade-in">
+              <div className="flex items-center justify-between border-b border-amber-200/50 pb-2">
+                <div className="text-[#654d0c] font-black uppercase tracking-wide flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-amber-600" />
+                  Struk Berhasil Diproses AI!
+                </div>
+                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] uppercase font-bold px-2 py-0.5 rounded-md">
+                  Form Terisi Otomatis
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-stone-650">
+                <div>
+                  <span className="text-[10px] text-stone-400 block uppercase font-mono">📅 Tanggal</span>
+                  <span className="font-bold text-stone-800">{scanResultJson.tanggal || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 block uppercase font-mono">👤 Merchant/Penerima</span>
+                  <span className="font-bold text-stone-800 truncate block">{scanResultJson.deskripsi || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 block uppercase font-mono">💵 Total Nominal</span>
+                  <span className="font-bold text-amber-800 font-mono">
+                    Rp {new Intl.NumberFormat('id-ID').format(scanResultJson.nominal || 0)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 block uppercase font-mono">📇 Ringkasan</span>
+                  <span className="font-semibold text-stone-700 truncate block">{scanResultJson.keterangan || '-'}</span>
+                </div>
+              </div>
+
+              {scanResultJson.items && scanResultJson.items.length > 0 && (
+                <div className="pt-2 border-t border-amber-200/30">
+                  <div className="text-[10px] text-amber-900/80 font-bold uppercase tracking-wider mb-1.5">
+                    Rincian Item Yang Diekstrak ({scanResultJson.items.length})
+                  </div>
+                  <div className="max-h-24 overflow-y-auto space-y-1 font-mono text-[11px] bg-white/60 p-2 rounded-lg border border-amber-200/30">
+                    {scanResultJson.items.map((it: any, idxOr: number) => (
+                      <div key={idxOr} className="flex justify-between items-center text-stone-750 hover:bg-amber-100/30 px-1 py-0.5 rounded transition">
+                        <span className="truncate max-w-sm">{it.item} ({it.jumlahVolume || '1 Ls'})</span>
+                        <div className="flex gap-2.5 shrink-0 text-stone-500">
+                          {it.debit !== undefined && <span className="text-emerald-700 font-bold">D: {it.debit}</span>}
+                          {it.kredit !== undefined && <span className="text-rose-700 font-bold">K: {it.kredit}</span>}
+                          {it.saldo !== undefined && <span className="text-blue-700 font-extrabold">S: {it.saldo}</span>}
+                          <span className="text-stone-900 font-bold font-mono">Rp {new Intl.NumberFormat('id-ID').format(it.total || 0)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* SECTION 1: Form & Metadata */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 bg-stone-50/50 p-5 rounded-2xl border border-stone-200">
@@ -2199,14 +2437,27 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               <h3 className="text-xs font-semibold uppercase font-mono tracking-wider text-stone-500">Item & Transaksi Pengeluaran</h3>
               <p className="text-xs text-stone-450">Tulis deskripsi detail item serta nominal transaksinya.</p>
             </div>
-            <button
-              type="button"
-              onClick={handleAddItemRow}
-              className="flex items-center gap-1.5 text-xs bg-stone-900 hover:bg-stone-850 text-white font-medium px-3 py-1.5 rounded-lg transition"
-            >
-              <Plus size={14} />
-              Tambah Baris Item
-            </button>
+            
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-xs text-stone-600 cursor-pointer hover:text-stone-900 select-none bg-stone-100 hover:bg-stone-200/80 px-3 py-1.5 rounded-lg transition border border-stone-200 shadow-3xs">
+                <input
+                  type="checkbox"
+                  checked={showLedgerCols}
+                  onChange={(e) => setShowLedgerCols(e.target.checked)}
+                  className="rounded border-stone-300 text-stone-900 focus:ring-stone-500 h-3.5 w-3.5 cursor-pointer"
+                />
+                Kolom Akunting (D/K/Saldo)
+              </label>
+
+              <button
+                type="button"
+                onClick={handleAddItemRow}
+                className="flex items-center gap-1.5 text-xs bg-stone-900 hover:bg-stone-850 text-white font-medium px-3 py-1.5 rounded-lg transition"
+              >
+                <Plus size={14} />
+                Tambah Baris Item
+              </button>
+            </div>
           </div>
 
           {/* Table Container */}
@@ -2216,8 +2467,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 <tr className="border-b border-stone-200 text-stone-550 font-mono text-xs uppercase">
                   <th className="py-2 w-10">No</th>
                   <th className="py-2">Item Deskripsi Pengeluaran</th>
-                  <th className="py-2 w-36">Jumlah / Volume</th>
-                  <th className="py-2 w-48 text-right">Nilai Total (Rp)</th>
+                  <th className="py-2 w-32">Jumlah / Volume</th>
+                  {showLedgerCols && (
+                    <>
+                      <th className="py-2 w-32 text-right">Debit (Rp)</th>
+                      <th className="py-2 w-32 text-right">Kredit (Rp)</th>
+                      <th className="py-2 w-32 text-right">Saldo (Rp)</th>
+                    </>
+                  )}
+                  <th className="py-2 w-44 text-right">Nilai Total (Rp)</th>
                   <th className="py-2 w-44 pl-4">Keterangan Halaman</th>
                   <th className="py-2 w-12 text-center">Aksi</th>
                 </tr>
@@ -2248,6 +2506,59 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                         onChange={(e) => handleItemChange(index, 'jumlahVolume', e.target.value)}
                       />
                     </td>
+
+                    {/* Conditional Ledger Columns D/K/S */}
+                    {showLedgerCols && (
+                      <>
+                        {/* Debit */}
+                        <td className="py-3 pr-2 text-right">
+                          <input
+                            type="text"
+                            placeholder="0"
+                            className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-2 text-right text-xs font-mono focus:ring-1 focus:ring-stone-400 focus:outline-none"
+                            value={item.debit ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d+$/.test(val)) {
+                                handleItemChange(index, 'debit', val === '' ? undefined : parseInt(val, 10));
+                              }
+                            }}
+                          />
+                        </td>
+
+                        {/* Kredit */}
+                        <td className="py-3 pr-2 text-right">
+                          <input
+                            type="text"
+                            placeholder="0"
+                            className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-2 text-right text-xs font-mono focus:ring-1 focus:ring-stone-400 focus:outline-none"
+                            value={item.kredit ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d+$/.test(val)) {
+                                handleItemChange(index, 'kredit', val === '' ? undefined : parseInt(val, 10));
+                              }
+                            }}
+                          />
+                        </td>
+
+                        {/* Saldo */}
+                        <td className="py-3 pr-2 text-right font-medium">
+                          <input
+                            type="text"
+                            placeholder="0"
+                            className="w-full bg-amber-50/50 border border-amber-200/60 rounded-lg py-1.5 px-2 text-right text-xs font-mono focus:ring-1 focus:ring-stone-400 focus:outline-none font-semibold text-stone-800"
+                            value={item.saldo ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d+$/.test(val)) {
+                                handleItemChange(index, 'saldo', val === '' ? undefined : parseInt(val, 10));
+                              }
+                            }}
+                          />
+                        </td>
+                      </>
+                    )}
 
                     {/* Numeric Rupiah Total */}
                     <td className="py-3 pr-2 text-right">

@@ -598,7 +598,14 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
             }
           }
 
-          const driveFileName = `Bukti Pembayaran - (${cleanJenis} - ${cleanPenerima})${paymentExt}`;
+          // Strip system prepends to keep original clean name
+          let cleanOriginalName = originalName || 'Bukti Pembayaran';
+          cleanOriginalName = cleanOriginalName.replace(/^Bukti Pembayaran - \([^-]+\s*-\s*[^)]+\)\s*-\s*/i, '');
+          cleanOriginalName = cleanOriginalName.replace(/^Bukti Pembayaran - /i, '');
+          
+          const lastDotPay = cleanOriginalName.lastIndexOf('.');
+          const baseNamePay = lastDotPay !== -1 ? cleanOriginalName.substring(0, lastDotPay) : cleanOriginalName;
+          const driveFileName = `${baseNamePay.trim()}${paymentExt}`;
           
           setSaveProgress('Mengunggah berkas bukti pembayaran langsung ke Google Drive...');
           const uploadResult = await uploadFileToFolder(

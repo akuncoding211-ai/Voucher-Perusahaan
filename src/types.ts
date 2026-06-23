@@ -2,9 +2,12 @@ export interface SubmissionItem {
   id: string;
   no: number;
   item: string;
-  jumlahVolume: string;
-  total: number;
-  keterangan: string;
+  jumlahVolume: string; // Keterangan/Volume
+  total: number; // Nominal
+  keterangan: string; // Detail tambahan
+  debit?: number;
+  kredit?: number;
+  saldo?: number;
 }
 
 export type PaymentMethod = 'Tunai' | 'Cek/Transfer';
