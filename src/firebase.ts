@@ -748,9 +748,8 @@ export const googleDriveLogin = async (): Promise<{ user: User; accessToken: str
 
   const secondaryAuth = getAuth(secondaryApp);
   const provider = new GoogleAuthProvider();
-  // Request Google Drive File write/edit permissions as well as full read/write for seamless cross-account migration
+  // Request Google Drive File write/edit permissions - we use drive.file as full drive scope is restricted and blocked by Google without verification
   provider.addScope('https://www.googleapis.com/auth/drive.file');
-  provider.addScope('https://www.googleapis.com/auth/drive');
   // Prompt account selection to make it extremely easy to connect multiple DIFFERENT accounts!
   provider.setCustomParameters({
     prompt: 'select_account'
