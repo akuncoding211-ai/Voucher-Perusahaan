@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react'; 
 import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert } from 'lucide-react';
+import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw } from 'lucide-react';
 import { getStoredGoogleDriveToken, googleDriveLogin, saveSubmissionToFirestore } from '../firebase';
 
 interface PrintDocumentProps {
@@ -36,6 +36,8 @@ export interface RenderedPage {
   isLandscape?: boolean;
   isPlaceholder?: boolean;
   errorReason?: string;
+  fileId?: string;
+  fileUrl?: string;
 }
 
 const loadPdfJs = (): Promise<any> => {
@@ -540,7 +542,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
               dataUrl: '',
               isLandscape: false,
               isPlaceholder: true,
-              errorReason: fileErr.message || String(fileErr)
+              errorReason: fileErr.message || String(fileErr),
+              fileId: fileId,
+              fileUrl: file.url
             });
           }
         }
@@ -1100,7 +1104,76 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     : 'w-[210mm] min-h-[297mm] h-[297mm] print-portrait'
                 }`}
               >
-                {page.isPlaceholder ? (
+                {page.isPlaceholder && page.fileId ? (
+                  <div className="w-full h-full relative flex flex-col items-center justify-between bg-stone-100">
+                    {/* Native Google Drive Embedded Viewer */}
+                    <iframe
+                      src={`https://drive.google.com/file/d/${page.fileId}/preview`}
+                      className="w-full h-full border-0 z-0 bg-stone-50"
+                      allow="autoplay"
+                      referrerPolicy="no-referrer"
+                    />
+
+                    {/* Floating Controls Overlay specifically configured for quick sync and manual copy overrides */}
+                    <div className="absolute bottom-4 left-4 right-4 bg-stone-900/90 hover:bg-stone-950/95 text-white rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-xl backdrop-blur-md z-10 print:hidden transition-all duration-150 border border-stone-800">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-amber-500/10 border border-amber-500/35 rounded-lg text-[#D4AF37]">
+                          <Cloud size={14} />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-[10px] font-extrabold tracking-wide uppercase text-stone-300">Pratinjau Langsung Google Drive</p>
+                          <p className="text-[9px] text-stone-400 font-medium">Bekerja via otorisasi browser Anda. Jika file tidak muncul, Anda dapat menyalin file atau membuka tab baru.</p>
+                        </div>
+                      </div>
+
+                      {(() => {
+                        const file = attachmentFiles[page.fileIndex];
+                        const url = file?.url || '';
+                        const copying = isCopying[page.fileId!];
+
+                        return (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={handleConnectDriveFromWarning}
+                              disabled={isConnectingDrive}
+                              className="px-3 py-1.5 bg-stone-800 hover:bg-stone-750 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center gap-1.5"
+                            >
+                              <RefreshCw size={11} className={isConnectingDrive ? 'animate-spin' : ''} />
+                              Ganti Akun
+                            </button>
+
+                            <button
+                              onClick={() => handleCopyFileToMyDrive(url, file.name)}
+                              disabled={copying}
+                              className="px-3 py-1.5 bg-[#D4AF37] hover:bg-[#Bca031] disabled:bg-stone-700 text-stone-950 font-extrabold rounded-lg text-[10px] transition flex items-center gap-1.5 cursor-pointer"
+                            >
+                              {copying ? (
+                                <>
+                                  <Loader2 size={11} className="animate-spin text-stone-950" />
+                                  Menyalin...
+                                </>
+                              ) : (
+                                <>
+                                  <Cloud size={11} className="text-stone-950" />
+                                  Salin ke GDrive Saya
+                                </>
+                              )}
+                            </button>
+                            
+                            <a
+                              href={`https://drive.google.com/file/d/${page.fileId}/view`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-3 py-1.5 bg-stone-800 hover:bg-stone-750 text-white font-bold rounded-lg text-[10px] transition flex items-center gap-1.5 cursor-pointer no-underline"
+                            >
+                              Buka di Tab Baru ↗
+                            </a>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : page.isPlaceholder ? (
                   <div className="flex flex-col items-center justify-center text-center p-8 max-w-xl animate-fade-in">
                     {/* Modern Secure Lock Badge */}
                     <div className="relative mb-6">
