@@ -7,21 +7,27 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Set higher body limits to handle large image or PDF uploads in base64 format
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Initialize Google Gemini Client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// Helper function to lazily initialize Google Gemini Client
+function getGeminiClient() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY tidak dikonfigurasi di server. Silakan tambahkan variabel lingkungan GEMINI_API_KEY.");
   }
-});
+  return new GoogleGenAI({
+    apiKey: apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  });
+}
 
 // AI Parse Receipt Endpoint
 app.post("/api/gemini/parse-receipt", async (req, res) => {
@@ -37,6 +43,8 @@ app.post("/api/gemini/parse-receipt", async (req, res) => {
         error: "GEMINI_API_KEY tidak dikonfigurasi di server. Silakan hubungi admin atau periksa halaman Secrets." 
       });
     }
+
+    const ai = getGeminiClient();
 
     // Clean base64 header if included
     const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");

@@ -46,6 +46,22 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
     }
   };
 
+  const handleReconnectDrive = async () => {
+    setErrorText('');
+    setIsConnecting(true);
+    try {
+      const result = await googleDriveLogin();
+      if (result.accessToken) {
+        loadDrives();
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorText(`Gagal menyambungkan ulang Google Drive: ${err.message || err}`);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const handleRemoveDrive = (emailToRemove: string) => {
     const list = getConnectedDrives();
     const updated = list.filter(d => d.email.toLowerCase() !== emailToRemove.toLowerCase());
@@ -218,14 +234,29 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveDrive(drive.email)}
-                      className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer self-end"
-                      title="Putus Hubungan Akun Ini"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    <div className="flex items-center gap-1.5 self-end">
+                      {drive.isExpired && (
+                        <button
+                          type="button"
+                          onClick={handleReconnectDrive}
+                          disabled={isConnecting}
+                          className="p-1.5 text-amber-600 hover:text-amber-800 rounded-lg hover:bg-amber-100/50 border border-amber-200 flex items-center gap-1 transition cursor-pointer shadow-4xs font-sans"
+                          title="Sambungkan Ulang Sesi Token Google Drive Anda"
+                        >
+                          <RefreshCw size={11} className={isConnecting ? 'animate-spin' : ''} />
+                          <span className="text-[10px] font-bold">Sambungkan Ulang</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveDrive(drive.email)}
+                        className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                        title="Putus Hubungan Akun Ini"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
