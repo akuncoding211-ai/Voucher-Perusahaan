@@ -29,6 +29,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
   const [isSyncing, setIsSyncing] = useState(false);
   const [isStopRequested, setIsStopRequested] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
+  const [isDeduplicating, setIsDeduplicating] = useState(false);
   const stopRequestedRef = useRef(false);
   const [syncProgress, setSyncProgress] = useState(0); // overall percentage
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -427,6 +428,202 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
     }
   };
 
+  const parseDuplicate = (filename: string) => {
+    const lastDot = filename.lastIndexOf('.');
+    const ext = lastDot !== -1 ? filename.substring(lastDot) : '';
+    const nameWithoutExt = lastDot !== -1 ? filename.substring(0, lastDot) : filename;
+
+    let current = nameWithoutExt;
+    let isCopy = false;
+    
+    // Pola untuk mencocokkan " (1)", " (2)", " - Copy", " - Copy (1)", dll.
+    const copyRegex = /\s+\(\d+\)$|\s+-?\s*Copy\s*(?:\(\d+\))?$/i;
+    
+    while (copyRegex.test(current)) {
+      current = current.replace(copyRegex, '');
+      isCopy = true;
+    }
+
+    return {
+      isCopy,
+      baseName: current + ext,
+      cleanNameWithoutExt: current
+    };
+  };
+
+  const handleDeduplicateFiles = async () => {
+    const token = getStoredGoogleDriveToken();
+    if (!token) {
+      setErrorLog('Google Drive belum terhubung. Hubungkan akun terlebih dahulu.');
+      return;
+    }
+
+    const confirmMessage = `Apakah Anda yakin ingin mencari & menghapus file duplikat di Google Drive?\n\n` +
+      `Sistem akan memindai seluruh subfolder di dalam "Voucher-APP" untuk mencari:\n` +
+      `1. File dengan nama sama persis (hanya menyimpan yang paling baru).\n` +
+      `2. File salinan dengan akhiran angka seperti (1), (2), (Copy) dll.\n\n` +
+      `File duplikat yang tidak terpilih akan dipindahkan ke Sampah Google Drive agar rapi.\n\n` +
+      `Apakah Anda ingin melanjutkan?`;
+
+    if (!window.confirm(confirmMessage)) {
+      addLog(`[DUPLIKAT] Proses dibatalkan oleh pengguna.`);
+      return;
+    }
+
+    setIsDeduplicating(true);
+    setLogs([]);
+    setErrorLog(null);
+    addLog(`[DUPLIKAT] Memulai pemindaian file duplikat di folder "Voucher-APP"...`);
+
+    try {
+      // 1. Find Voucher-APP folder ID
+      const queryRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=name='Voucher-APP'+and+mimeType='application/vnd.google-apps.folder'+and+trashed=false&fields=files(id)`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!queryRes.ok) {
+        throw new Error('Gagal mengakses Google Drive.');
+      }
+      const queryData = await queryRes.json();
+      if (!queryData.files || queryData.files.length === 0) {
+        throw new Error('Folder "Voucher-APP" tidak ditemukan. Lakukan sinkronisasi terlebih dahulu untuk membuat folder.');
+      }
+      const voucherAppId = queryData.files[0].id;
+
+      let processedFoldersCount = 0;
+      let totalDeletedCount = 0;
+      let totalRenamedCount = 0;
+
+      // Recursive scan function
+      const scanFolder = async (folderId: string, folderPath: string) => {
+        processedFoldersCount++;
+        addLog(`[DUPLIKAT] Memindai folder [${processedFoldersCount}]: ${folderPath}...`);
+
+        // Fetch files inside folder
+        const listRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType,createdTime)&pageSize=1000`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (!listRes.ok) {
+          addLog(`[Peringatan] Gagal memindai folder: ${folderPath}`);
+          return;
+        }
+
+        const data = await listRes.json();
+        const items = data.files || [];
+
+        const subfolders = items.filter((i: any) => i.mimeType === 'application/vnd.google-apps.folder');
+        const filesOnly = items.filter((i: any) => i.mimeType !== 'application/vnd.google-apps.folder');
+
+        // Group files in this folder by base name
+        const groups: { [baseName: string]: any[] } = {};
+        for (const f of filesOnly) {
+          const { baseName, isCopy } = parseDuplicate(f.name);
+          const enriched = {
+            ...f,
+            baseName,
+            isCopy,
+            createdTimeDate: new Date(f.createdTime || 0)
+          };
+          if (!groups[baseName]) {
+            groups[baseName] = [];
+          }
+          groups[baseName].push(enriched);
+        }
+
+        // Process each group
+        for (const baseName of Object.keys(groups)) {
+          const groupFiles = groups[baseName];
+          if (groupFiles.length <= 1) {
+            continue; // No duplicates
+          }
+
+          // Sort groupFiles:
+          // 1. Non-copies (clean files) come first
+          // 2. Newer createdTime comes first
+          groupFiles.sort((a, b) => {
+            if (a.isCopy !== b.isCopy) {
+              return a.isCopy ? 1 : -1; // non-copies first
+            }
+            return b.createdTimeDate.getTime() - a.createdTimeDate.getTime(); // newer first
+          });
+
+          const primaryFile = groupFiles[0];
+          addLog(`[DUPLIKAT] Menemukan ${groupFiles.length} file terkait untuk "${baseName}":`);
+          addLog(`  -> Menyimpan file utama: "${primaryFile.name}" (ID: ${primaryFile.id})`);
+
+          // If the primary file was a copy, we rename it to baseName for extreme neatness!
+          if (primaryFile.isCopy) {
+            addLog(`  -> Merapikan nama file copy "${primaryFile.name}" menjadi "${baseName}"...`);
+            try {
+              const renameRes = await fetch(`https://www.googleapis.com/drive/v3/files/${primaryFile.id}`, {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ name: baseName })
+              });
+              if (renameRes.ok) {
+                addLog(`  -> [SUKSES] Nama file dirapikan.`);
+                totalRenamedCount++;
+              } else {
+                addLog(`  -> [Peringatan] Gagal merapikan nama file.`);
+              }
+            } catch (err) {
+              console.error(err);
+            }
+          }
+
+          // Move the rest of the files in the group to Trash
+          for (let i = 1; i < groupFiles.length; i++) {
+            const dupFile = groupFiles[i];
+            addLog(`  -> Memindahkan duplikat ke Sampah: "${dupFile.name}" (ID: ${dupFile.id})`);
+            try {
+              const trashRes = await fetch(`https://www.googleapis.com/drive/v3/files/${dupFile.id}`, {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ trashed: true })
+              });
+              if (trashRes.ok) {
+                addLog(`  -> [SUKSES HAPUS] Berhasil membuang duplikat.`);
+                totalDeletedCount++;
+              } else {
+                addLog(`  -> [Peringatan] Gagal membuang duplikat.`);
+              }
+            } catch (err) {
+              console.error(err);
+            }
+          }
+        }
+
+        // Recurse subfolders
+        for (const sub of subfolders) {
+          await scanFolder(sub.id, `${folderPath}/${sub.name}`);
+        }
+      };
+
+      // Start the recursive scan starting from Voucher-APP
+      await scanFolder(voucherAppId, '/Voucher-APP');
+
+      addLog(`== SELESAI PEMBERSIHAN ==`);
+      addLog(`Berhasil menyisir ${processedFoldersCount} folder.`);
+      addLog(`Berhasil memindahkan ${totalDeletedCount} file duplikat/copy ke Sampah Google Drive.`);
+      addLog(`Berhasil mengoreksi nama ${totalRenamedCount} file copy agar rapi.`);
+      addLog(`Tampilan Google Drive Anda sekarang bersih, rapi, dan teratur! ✨`);
+
+    } catch (err: any) {
+      setErrorLog(err.message || 'Gagal membersihkan file duplikat.');
+      addLog(`[DUPLIKAT] Eror: ${err.message || err}`);
+    } finally {
+      setIsDeduplicating(false);
+    }
+  };
+
   const handleStopSync = () => {
     setIsStopRequested(true);
     stopRequestedRef.current = true;
@@ -804,7 +1001,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                 
                 <button
                   type="button"
-                  disabled={isSyncing || isCleaning}
+                  disabled={isSyncing || isCleaning || isDeduplicating}
                   onClick={handleCleanDriveTrash}
                   className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 text-xs font-black uppercase tracking-wider text-white bg-stone-700 hover:bg-stone-800 disabled:bg-stone-300 rounded-xl shadow-sm transition disabled:cursor-not-allowed cursor-pointer shrink-0"
                 >
@@ -817,6 +1014,38 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                     <>
                       <Trash2 size={14} />
                       <span>Rapikan Tampilan Drive</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Clean Up Duplicates Section */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-stone-50 border border-stone-200 p-4 rounded-xl">
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-stone-800 leading-tight flex items-center gap-1.5">
+                    <Layers size={14} className="text-amber-600" />
+                    Bersihkan File Duplikat & Salinan (Copy)
+                  </p>
+                  <p className="text-[10.5px] text-stone-600">
+                    Menyisir folder <strong className="text-stone-800">Voucher-APP</strong> untuk mendeteksi file salinan ganda (seperti berkas berakhiran <code className="bg-stone-100 px-1 py-0.5 rounded text-rose-600">(1)</code>, <code className="bg-stone-100 px-1 py-0.5 rounded text-rose-600">Copy</code>) atau file bernama sama. Sistem akan menyimpan berkas terbaru, merapikan namanya, dan membuang duplikatnya ke Sampah.
+                  </p>
+                </div>
+                
+                <button
+                  type="button"
+                  disabled={isSyncing || isCleaning || isDeduplicating}
+                  onClick={handleDeduplicateFiles}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 text-xs font-black uppercase tracking-wider text-white bg-amber-600 hover:bg-amber-700 disabled:bg-stone-300 rounded-xl shadow-sm transition disabled:cursor-not-allowed cursor-pointer shrink-0"
+                >
+                  {isDeduplicating ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Membersihkan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Layers size={14} />
+                      <span>Bersihkan File Duplikat</span>
                     </>
                   )}
                 </button>
