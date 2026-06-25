@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Submission, SubmissionItem, PaymentMethod, REQUIRED_TRANSACTION_DOCS } from '../types';
 import { 
   googleDriveLogin, 
@@ -299,6 +299,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [pettyCashCustodian, setPettyCashCustodian] = useState('');
   const [pettyCashLocalFile, setPettyCashLocalFile] = useState<File | null>(null);
   const [pettyCashDriveFile, setPettyCashDriveFile] = useState<{ url: string; name: string } | null>(null);
+  const isSubmittingRef = useRef(false);
 
   // Signatures
   const [dibuatOleh, setDibuatOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_CREATOR_NAME') || 'Nur Wahyudi');
@@ -900,6 +901,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
     // Validation
     if (!dibayarkanKepada.trim()) {
       setValidationError('Penerima pembayaran (Dibayarkan Kepada) wajib diisi.');
@@ -1167,6 +1171,11 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           return cleaned.trim() || filename;
         };
 
+        const usedNames = new Set<string>();
+        // Add system-generated files to usedNames to avoid conflicts
+        usedNames.add(`F1 - (${cleanJenis} - ${cleanPenerima}).pdf`.toLowerCase());
+        usedNames.add(`F2 - (${cleanJenis} - ${cleanPenerima}).pdf`.toLowerCase());
+
         for (let i = 0; i < fileItems.length; i++) {
           const item = fileItems[i];
           // Skip if they are older versions of generated F1/F2 files to avoid infinite loops / redundant pages
@@ -1175,6 +1184,18 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           if (isSystemGenerated) {
             continue;
           }
+
+          if (item.isDrive && item.url) {
+            // Berkas sudah ada di Google Drive, tidak perlu diunduh dan diunggah ulang
+            finalFiles.push({
+              url: item.url,
+              name: item.name,
+              docType: item.docType
+            });
+            usedNames.add(item.name.toLowerCase());
+            continue;
+          }
+
           setSaveProgress(`Mengunggah Berkas Lampiran (${i + 1}/${fileItems.length}): ${item.name}...`);
           let fileBytes: Uint8Array | null = null;
           let mimeType = 'application/octet-stream';
@@ -1220,7 +1241,13 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           const lastDot = cleanOriginalName.lastIndexOf('.');
           const namePart = lastDot !== -1 ? cleanOriginalName.substring(0, lastDot) : cleanOriginalName;
           
-          const finalFileName = i === 0 ? `${namePart}${ext}` : `${namePart} (${i + 1})${ext}`;
+          let finalFileName = `${namePart}${ext}`;
+          let nameCounter = 1;
+          while (usedNames.has(finalFileName.toLowerCase())) {
+            nameCounter++;
+            finalFileName = `${namePart} (${nameCounter})${ext}`;
+          }
+          usedNames.add(finalFileName.toLowerCase());
 
           const resData = await uploadFileToFolder(finalFileName, mimeType, fileBytes, targetFolderId);
           finalFiles.push({
@@ -1399,6 +1426,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       }
     } finally {
       setIsSaving(false);
+      isSubmittingRef.current = false;
     }
   };
 

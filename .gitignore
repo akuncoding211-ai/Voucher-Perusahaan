@@ -6,13 +6,3 @@ coverage/
 *.log
 .env*
 !.env.example
-
-# Electron build outputs
-dist-electron/
-release/
-out/
-
-# Binary files
-*.exe
-*.dll
-*.pak
