@@ -1,24 +1,29 @@
 import { initializeApp, getApp, getApps, FirebaseApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  getDocs, 
-  setDoc, 
-  deleteDoc, 
-  query, 
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  query,
   orderBy,
   Firestore,
   getDocFromServer,
-  getDoc
+  getDoc,
+  // ═════════ TAMBAHAN UNTUK OFFLINE CACHE ═════════
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager
+  // ════════════════════════════════════════════════
 } from 'firebase/firestore';
-import { 
-  getAuth, 
-  signInWithEmailAndPassword, 
+import {
+  getAuth,
+  signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  signOut, 
-  onAuthStateChanged, 
-  Auth, 
+  signOut,
+  onAuthStateChanged,
+  Auth,
   User,
   GoogleAuthProvider,
   signInWithPopup
@@ -75,14 +80,14 @@ export const getStoredFirebaseConfig = (): any | null => {
 // TWO-WAY DATA SCHEMAS TRANSLATION / MAPPER UTILITIES
 export const mapFirestoreToSubmission = (docId: string, data: any): Submission => {
   let firestoreItems = Array.isArray(data.items) ? data.items : [];
-  
+
   // Reconstruct nested item array if the old record was stored flat at the top-level
   if (firestoreItems.length === 0) {
     const itemName = data.isi_invoice || data.isiInvoice || data.item || data.nama || data.jenis_pengajuan || data.jenisPengajuan || data.jenis || 'Item Penyerahan';
     const itemTotal = parseFloat(data.total_nominal || data.totalNominal || data.nominal || data.total || '0') || 0;
     const itemQty = data.qty !== undefined ? String(data.qty) : (data.jumlahVolume || '1');
     const itemKeterangan = data.no_invoice || data.noInvoice || data.keterangan || '';
-    
+
     firestoreItems = [{
       id: `item-${docId}-flat`,
       no: 1,
@@ -160,7 +165,7 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     dibayarkanDengan: data.dibayarkanDengan || data.dibayarkan_dengan || (finalStatus === 'Lunas' ? 'Cek/Transfer' : 'Tunai'),
     status: finalStatus as 'Lunas' | 'Belum Lunas',
     notes: data.notes || data.catatan || data.catatan_tambahan || data.catatanTambahan || '',
-    
+
     // Corporate signatures support
     dibuatOleh: data.dibuatOleh || data.createdByEmail || 'Nur Wahyudi',
     disetujuiOleh: data.disetujuiOleh || 'Harijon',
@@ -218,8 +223,8 @@ export const cleanUndefined = (obj: any): any => {
 };
 
 export const mapSubmissionToFirestore = (
-  sub: Submission, 
-  userEmail?: string, 
+  sub: Submission,
+  userEmail?: string,
   userId?: string,
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
@@ -247,10 +252,10 @@ export const mapSubmissionToFirestore = (
     // Extract numbers from volume (e.g. "1 Lot" -> 1, "5 Box" -> 5)
     const qtyStr = String(item.jumlahVolume || '1');
     const parsedQty = parseInt(qtyStr.replace(/[^0-9]/g, '')) || 1;
-    
+
     return {
       nama: item.item || '',
-      nominal: item.total || 0, 
+      nominal: item.total || 0,
       qty: parsedQty,
       jenis: sub.jenisPengajuan || '',
       kode: shortKode,
@@ -289,7 +294,7 @@ export const mapSubmissionToFirestore = (
     isi_invoice: firstItemName,
     isiInvoice: firstItemName,
     files: [],
-    
+
     // Google Drive attachment support
     googleDriveFileUrl: sub.googleDriveFileUrl || '',
     googleDriveFileName: sub.googleDriveFileName || '',
@@ -298,7 +303,7 @@ export const mapSubmissionToFirestore = (
     items: cleanItems,
     updatedAt: new Date(),
     updated_at: new Date(),
-    
+
     // Double save native fields so pulling it back preserves signatures
     id: sub.id,
     isInvoice: !!sub.isInvoice,
@@ -310,7 +315,7 @@ export const mapSubmissionToFirestore = (
     isPettyCash: !!sub.isPettyCash,
     pettyCashCustodian: sub.pettyCashCustodian || '',
     pettyCashFile: sub.pettyCashFile || null,
-    
+
     lokasi: sub.lokasi || 'Lt. 1',
     tanggal: sub.tanggal || '',
     jenisPengajuan: sub.jenisPengajuan || '',
@@ -373,9 +378,9 @@ export const loadAllCompaniesFromFirestore = async (): Promise<any[]> => {
 };
 
 export const registerUserToFirebase = async (
-  email: string, 
-  password: string, 
-  fullName: string, 
+  email: string,
+  password: string,
+  fullName: string,
   role: string,
   companyId: string = 'nmsa',
   companyName: string = 'PT Nusantara Mineral Sukses Abadi'
@@ -389,7 +394,7 @@ export const registerUserToFirebase = async (
   try {
     const creds = await createUserWithEmailAndPassword(firebaseAuth, email, password);
     const user = creds.user;
-    
+
     // Wait for the auth session to populate, then record the user under users/
     await setDoc(doc(firestoreDb, 'users', user.uid), {
       uid: user.uid,
@@ -405,7 +410,7 @@ export const registerUserToFirebase = async (
     const companyCleanId = companyId.toLowerCase().trim();
     const companyRef = doc(firestoreDb, 'companies', companyCleanId);
     const companySnap = await getDoc(companyRef);
-    
+
     if (!companySnap.exists()) {
       await setDoc(companyRef, {
         id: companyCleanId,
@@ -453,18 +458,25 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     } else {
       firebaseApp = initializeApp(config);
     }
-    // Set firestore and auth instances
-    firestoreDb = getFirestore(firebaseApp);
+
+    // ═════════ PERUBAHAN UNTUK OFFLINE CACHE ═════════
+    firestoreDb = initializeFirestore(firebaseApp, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+      })
+    });
+    // ═════════════════════════════════════════════════
+
     firebaseAuth = getAuth(firebaseApp);
-    
+
     // Register listener for auth states
     onAuthStateChanged(firebaseAuth, (user) => {
       currentUser = user;
       console.log('📡 Auth State Modified. User logged in:', user?.email || 'NONE');
     });
 
-    console.log('✅ Firebase initialized successfully with project:', config.projectId);
-    
+    console.log('✅ Firebase initialized successfully with offline persistence. Project:', config.projectId);
+
     // Asynchronously validate connection to Firestore
     testConnection();
     return true;
@@ -544,7 +556,7 @@ export const getFirebaseUser = (): User | null => {
 
 export const registerAuthChangeListener = (callback: (user: User | null) => void): (() => void) => {
   if (!firebaseAuth) {
-    return () => {};
+    return () => { };
   }
   return onAuthStateChanged(firebaseAuth, callback);
 };
@@ -723,14 +735,14 @@ export const googleDriveLogin = async (): Promise<{ user: User; accessToken: str
   provider.setCustomParameters({
     prompt: 'select_account'
   });
-  
+
   try {
     const result = await signInWithPopup(secondaryAuth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Sesi otentikasi Google gagal menyuplai kunci akses (Access Token).');
     }
-    
+
     // Fetch detailed metadata from Drive API for accurate storage & user matching
     let driveDetails = null;
     try {
@@ -796,18 +808,18 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
     const q = query(collection(firestoreDb, path), orderBy('tanggal', 'desc'));
     const snapshot = await getDocs(q);
     const list: Submission[] = [];
-    
+
     snapshot.forEach(docSnap => {
       // Apply mapping from user schema (with items details and timestamps) to our rich interface
       const data = docSnap.data();
       const mapped = mapFirestoreToSubmission(docSnap.id, data);
-      
+
       // Filter by companyId client-side to be 100% immune from missing index errors
       if (!companyId || data.companyId === companyId || data.company_id === companyId) {
         list.push(mapped);
       }
     });
-    
+
     return list;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -817,7 +829,7 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
 
 // Put/Save single submission in Firestore under user's actual companyId
 export const saveSubmissionToFirestore = async (
-  submission: Submission, 
+  submission: Submission,
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
 ): Promise<void> => {
@@ -829,8 +841,8 @@ export const saveSubmissionToFirestore = async (
   try {
     // Map our rich React types to their exact expected database fields
     const fPayload = mapSubmissionToFirestore(
-      submission, 
-      currentUser?.email || 'admin@nmsa.com', 
+      submission,
+      currentUser?.email || 'admin@nmsa.com',
       currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
       userCompanyId,
       userCompanyName
@@ -875,7 +887,7 @@ export const loadActivityLogsFromFirestore = async (companyId?: string): Promise
     const q = query(collection(firestoreDb, path), orderBy('timestamp', 'desc'));
     const snapshot = await getDocs(q);
     const list: ActivityLog[] = [];
-    
+
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
       list.push({
@@ -891,7 +903,7 @@ export const loadActivityLogsFromFirestore = async (companyId?: string): Promise
         category: data.category || 'info'
       });
     });
-    
+
     // Cache Firestore logs locally too
     localStorage.setItem('NUSANTARA_ACTIVITY_LOGS', JSON.stringify(list));
     return list;
@@ -916,69 +928,45 @@ export const saveActivityLogToFirestore = async (
   userProfile?: any
 ): Promise<void> => {
   const logId = `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
-  const timestamp = new Date().toISOString();
-  
-  const activeUser = currentUser;
-  const userId = activeUser?.uid || 'anonymous';
-  const userEmail = activeUser?.email || 'offline_user';
-  const userName = userProfile?.fullName || activeUser?.email?.split('@')[0] || 'Sistem';
 
-  const logPayload: ActivityLog = {
-    id: logId,
-    timestamp,
-    userId,
-    userEmail,
-    userName,
-    action,
-    details,
-    category,
-    submissionId: submissionId || '',
-    submissionCode: submissionCode || ''
-  };
-
-  // 1. Cache to local storage list first
-  try {
-    const stored = localStorage.getItem('NUSANTARA_ACTIVITY_LOGS');
-    const list: ActivityLog[] = stored ? JSON.parse(stored) : [];
-    const updatedList = [logPayload, ...list].slice(0, 500); // limit to latest 500 logs to prevent overflow
-    localStorage.setItem('NUSANTARA_ACTIVITY_LOGS', JSON.stringify(updatedList));
-  } catch (e) {
-    console.warn('Failed to save log to localStorage:', e);
-  }
-
-  // 2. Write to Firestore if connected
-  if (isFirebaseConfigured() && firestoreDb) {
-    const path = 'activity_logs';
+  if (!isFirebaseConfigured() || !firestoreDb) {
+    // Cache locally if completely offline or missing context
     try {
-      await setDoc(doc(firestoreDb, path, logId), logPayload);
-    } catch (err) {
-      console.warn('Silent write logs rejection - failed to save log to Firestore:', err);
+      const stored = localStorage.getItem('NUSANTARA_ACTIVITY_LOGS');
+      const list: ActivityLog[] = stored ? JSON.parse(stored) : [];
+      list.unshift({
+        id: logId,
+        timestamp: new Date().toISOString(),
+        userId: currentUser?.uid || 'ANONYMOUS_CLIENT',
+        userEmail: currentUser?.email || 'offline-session@nmsa.com',
+        userName: userProfile?.fullName || 'Staf Offline',
+        action,
+        details,
+        submissionId: submissionId || '',
+        submissionCode: submissionCode || '',
+        category
+      });
+      localStorage.setItem('NUSANTARA_ACTIVITY_LOGS', JSON.stringify(list.slice(0, 200)));
+    } catch (e) {
+      console.error('Failed to append offline activity log entry', e);
     }
-  }
-};
-
-// Set stored config dynamically (allows pasting from UI setting panel)
-export const saveAndInitializeFirebaseConfig = (config: any): boolean => {
-  if (!config || !config.apiKey || !config.projectId) {
-    localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
-    firebaseApp = null;
-    firestoreDb = null;
-    firebaseAuth = null;
-    return false;
+    return;
   }
 
-  localStorage.setItem('NUSANTARA_FIREBASE_CONFIG', JSON.stringify(config));
-  return initializeFirebaseApp(config);
+  const path = 'activity_logs';
+  try {
+    await setDoc(doc(firestoreDb, path, logId), {
+      timestamp: new Date().toISOString(),
+      userId: currentUser?.uid || 'ANONYMOUS_CLIENT',
+      userEmail: currentUser?.email || 'system-fallback@nmsa.com',
+      userName: userProfile?.fullName || 'Sistem Otomatis',
+      action,
+      details,
+      submissionId: submissionId || null,
+      submissionCode: submissionCode || null,
+      category
+    });
+  } catch (error) {
+    console.warn('Silent activity logs tracking failed:', error);
+  }
 };
-
-// Clear config to disconnect Firebase
-export const clearFirebaseConfig = () => {
-  localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
-  firebaseApp = null;
-  firestoreDb = null;
-  firebaseAuth = null;
-};
-
-// Load initial config checking
-initializeFirebaseApp();
-

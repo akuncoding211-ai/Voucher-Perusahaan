@@ -1,16 +1,33 @@
-import express from "express";
-import path from "path";
-import { GoogleGenAI, Type } from "@google/genai";
-import dotenv from "dotenv";
+import { app, BrowserWindow, session } from 'electron';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import express from 'express';
+import dotenv from 'dotenv';
+import { GoogleGenAI, Type } from '@google/genai';
+import fs from 'fs';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Override Electron user storage data directory
+const baseAppDir = 'D:\\Aplikasi Kantor Nur Wahyudi';
+const userDataPath = path.join(baseAppDir, 'app-data');
+if (!fs.existsSync(userDataPath)) {
+  fs.mkdirSync(userDataPath, { recursive: true });
+}
+app.setPath('userData', userDataPath);
+
+// Load environment variables (from .env or .env.local)
 dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env.local') });
+dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 
-const app = express();
+const expressApp = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 // Set higher body limits to handle large image or PDF uploads in base64 format
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+expressApp.use(express.json({ limit: "50mb" }));
+expressApp.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Helper function to lazily initialize Google Gemini Client
 function getGeminiClient() {
@@ -29,7 +46,7 @@ function getGeminiClient() {
 }
 
 // AI Parse Receipt Endpoint
-app.post("/api/gemini/parse-receipt", async (req, res) => {
+expressApp.post("/api/gemini/parse-receipt", async (req, res) => {
   try {
     const { fileBase64, mimeType } = req.body;
 
@@ -124,7 +141,7 @@ PENTING: Seluruh nominal uang harus diekstrak sebagai angka (number) tanpa titik
     const parsedData = JSON.parse(response.text || "{}");
     return res.json({ success: true, result: parsedData });
 
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error parsing receipt using Gemini API:", error);
     return res.status(500).json({ 
       error: "Gagal memproses kwitansi menggunakan AI. Periksa kembali kualitas dokumen atau berkas Anda.",
@@ -133,29 +150,81 @@ PENTING: Seluruh nominal uang harus diekstrak sebagai angka (number) tanpa titik
   }
 });
 
-// Setup Vite Development Server or Serve static production bundle
-async function bootstrap() {
-  if (process.env.NODE_ENV !== "production") {
-    console.log("Starting server in development mode with Vite middleware...");
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    // Serve static frontend files in production
-    console.log("Starting server in production mode...");
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
+// Serve static frontend files in production
+const distPath = path.join(__dirname, "dist");
+expressApp.use(express.static(distPath));
+expressApp.get("*", (req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server is running at http://localhost:${PORT}`);
+let serverInstance;
+function startServer() {
+  return new Promise((resolve) => {
+    serverInstance = expressApp.listen(PORT, "127.0.0.1", () => {
+      console.log(`Express server running on http://127.0.0.1:${PORT}`);
+      resolve(PORT);
+    });
   });
 }
 
-bootstrap();
+function createWindow() {
+  const mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+    autoHideMenuBar: true,
+  });
+
+  // Set user agent to standard Chrome browser to prevent Google Auth block
+  mainWindow.webContents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+
+  // In development mode, we can just load the Vite dev server URL directly
+  if (process.env.ELECTRON_DEV === "true") {
+    mainWindow.loadURL(`http://localhost:3000`);
+  } else {
+    mainWindow.loadURL(`http://127.0.0.1:${PORT}`);
+  }
+}
+
+app.whenReady().then(async () => {
+  // Override User-Agent to avoid Google OAuth blocking (embedded browser detection)
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    details.requestHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+    callback({ cancel: false, requestHeaders: details.requestHeaders });
+  });
+
+  // Intercept and force download directory to D:\Aplikasi Kantor Nur Wahyudi
+  session.defaultSession.on('will-download', (event, item, webContents) => {
+    if (!fs.existsSync(baseAppDir)) {
+      fs.mkdirSync(baseAppDir, { recursive: true });
+    }
+    const fileName = item.getFilename();
+    const savePath = path.join(baseAppDir, fileName);
+    item.setSavePath(savePath);
+  });
+
+  // If packaged or running in production electron, start express server
+  if (process.env.ELECTRON_DEV !== "true") {
+    await startServer();
+  }
+  
+  createWindow();
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    if (serverInstance) {
+      serverInstance.close();
+    }
+    app.quit();
+  }
+});
